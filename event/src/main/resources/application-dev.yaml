@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: event
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/event_app_event_db}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: ${RABBITMQ_USERNAME:admin}
+    password: ${RABBITMQ_PASSWORD:admin}
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: INFO
+    com.example: DEBUG
+
+server:
+  port: 8083
