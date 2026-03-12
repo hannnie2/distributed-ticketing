@@ -5,33 +5,33 @@ import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 
 @Entity
-@Table(name = "event_outbox")
+@Table(name = "email_outbox")
 @Data
-public class OutboxMessage {
+public class EmailOutboxMessage {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(nullable = false)
-    private String exchange;
+    private String toEmail;
 
     @Column(nullable = false)
-    private String routingKey;
+    private String subject;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(columnDefinition = "jsonb", nullable = false)
-    private Map<String, Object> payload;
+    @Column(nullable = false, columnDefinition = "text")
+    private String htmlBody;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private OutboxMessageStatus status = OutboxMessageStatus.PENDING;
+
+    @Column(nullable = false)
+    private int retryCount = 0;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)

@@ -4,12 +4,14 @@ import com.example.order.api.InventoryApi;
 import com.example.order.api.PaymentApi;
 import com.example.order.config.RabbitQueue;
 import com.example.order.constants.OrderStatus;
-import com.example.order.constants.OutboxStatus;
+import com.example.order.constants.OutboxMessageStatus;
 import com.example.order.dto.SeatDto;
 import com.example.order.dto.CreateOrderInDto;
 import com.example.order.dto.CreateOrderOutDto;
+import com.example.order.entity.EmailOutboxMessage;
 import com.example.order.entity.Order;
 import com.example.order.entity.OutboxMessage;
+import com.example.order.repository.EmailOutboxRepository;
 import com.example.order.repository.OrderRepository;
 import com.example.order.repository.OutboxMessageRepository;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +32,7 @@ public class OrderService {
     private final InventoryApi inventoryApi;
     private final PaymentApi paymentApi;
     private final OutboxMessageRepository outboxMessageRepository;
+    private final EmailOutboxRepository emailOutboxRepository;
 
     @Transactional
     public CreateOrderOutDto createOrder(CreateOrderInDto createOrderInDto) {
@@ -45,6 +48,7 @@ public class OrderService {
 
         Order order = new Order();
         order.setEventId(createOrderInDto.eventId());
+        order.setUserEmail(createOrderInDto.userEmail());
         order.setSeats(response.seats());
         order.setAmount(calculateAmount(response.seats()));
         order.setStatus(OrderStatus.PENDING);
@@ -177,6 +181,7 @@ public class OrderService {
         order.setStatus(OrderStatus.CONFIRMED);
         orderRepository.save(order);
 
+        emailOutboxRepository.save(confirmationEmail(order));
         log.info("Order {} confirmed", orderId);
     }
 
@@ -238,7 +243,35 @@ public class OrderService {
         msg.setExchange(exchange);
         msg.setRoutingKey(routingKey);
         msg.setPayload(payload);
-        msg.setStatus(OutboxStatus.PENDING);
+        msg.setStatus(OutboxMessageStatus.PENDING);
+        return msg;
+    }
+
+    private EmailOutboxMessage confirmationEmail(Order order) {
+        StringBuilder rows = new StringBuilder();
+        for (SeatDto seat : order.getSeats()) {
+            rows.append(String.format(
+                    "<tr><td>Section %d</td><td>Row %s</td><td>Seat %d</td><td>$%.2f</td></tr>",
+                    seat.section(), seat.row(), seat.number(), seat.price()));
+        }
+
+        String html = """
+                <html><body style="font-family:sans-serif;color:#222">
+                  <h2>Your booking is confirmed!</h2>
+                  <p>Order <strong>#%d</strong> — Event <strong>#%d</strong></p>
+                  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse">
+                    <thead><tr><th>Section</th><th>Row</th><th>Seat</th><th>Price</th></tr></thead>
+                    <tbody>%s</tbody>
+                  </table>
+                  <p style="margin-top:16px">Total: <strong>$%.2f</strong></p>
+                  <p>Thank you for your purchase!</p>
+                </body></html>
+                """.formatted(order.getId(), order.getEventId(), rows, order.getAmount());
+
+        EmailOutboxMessage msg = new EmailOutboxMessage();
+        msg.setToEmail(order.getUserEmail());
+        msg.setSubject("Booking Confirmed — Order #" + order.getId());
+        msg.setHtmlBody(html);
         return msg;
     }
 }

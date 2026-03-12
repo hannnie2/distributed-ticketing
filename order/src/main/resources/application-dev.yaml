@@ -1,4 +1,8 @@
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 2
   application:
     name: order
   datasource:
@@ -19,6 +23,10 @@ spring:
     listener:
       simple:
         default-requeue-rejected: false
+
+resend:
+  api-key: ${RESEND_API_KEY}
+  from: ${RESEND_FROM}
 
 logging:
   level:

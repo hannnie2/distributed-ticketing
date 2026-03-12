@@ -1,32 +1,23 @@
 package com.example.inventory.outbox;
 
-import com.example.inventory.constants.OutboxStatus;
-import com.example.inventory.repository.OutboxMessageRepository;
+import com.example.inventory.entity.OutboxMessage;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Component
 @RequiredArgsConstructor
-@Slf4j
 public class OutboxProcessor {
-    private final OutboxMessageRepository outboxMessageRepository;
-    private final RabbitTemplate rabbitTemplate;
+
+    private final RabbitMessageProcessor rabbitMessageProcessor;
 
     @Scheduled(fixedDelay = 2000)
-    @Transactional
     public void relay() {
-        outboxMessageRepository.findAllByStatus(OutboxStatus.PENDING).forEach(msg -> {
-            try {
-                rabbitTemplate.convertAndSend(msg.getExchange(), msg.getRoutingKey(), msg.getPayload());
-                msg.setStatus(OutboxStatus.PROCESSED);
-            } catch (Exception e) {
-                log.error("Failed to relay outbox message. exchange={}, routingKey={}",
-                        msg.getExchange(), msg.getRoutingKey(), e);
-            }
-        });
+        List<OutboxMessage> messages = rabbitMessageProcessor.markAsProcessing();
+        for (OutboxMessage msg : messages) {
+            rabbitMessageProcessor.processOne(msg);
+        }
     }
 }

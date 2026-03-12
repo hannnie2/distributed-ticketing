@@ -1,19 +1,17 @@
-package com.example.event.outbox;
+package com.example.order.outbox;
 
-import com.example.event.entity.OutboxMessage;
+import com.example.order.entity.OutboxMessage;
 import lombok.RequiredArgsConstructor;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 @Component
 @RequiredArgsConstructor
-public class OutboxProcessor {
+public class RabbitOutboxRelay {
 
     private final RabbitMessageProcessor rabbitMessageProcessor;
 
-    @Scheduled(fixedDelay = 2000)
     public void relay() {
         List<OutboxMessage> messages = rabbitMessageProcessor.markAsProcessing();
         for (OutboxMessage msg : messages) {

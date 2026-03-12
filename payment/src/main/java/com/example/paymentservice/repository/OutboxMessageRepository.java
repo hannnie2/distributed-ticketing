@@ -1,17 +1,23 @@
 package com.example.paymentservice.repository;
 
-import com.example.paymentservice.constants.OutboxStatus;
 import com.example.paymentservice.entity.OutboxMessage;
-import jakarta.persistence.LockModeType;
-import jakarta.persistence.QueryHint;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
-import org.springframework.data.jpa.repository.QueryHints;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 public interface OutboxMessageRepository extends JpaRepository<OutboxMessage, Long> {
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
-    List<OutboxMessage> findAllByStatus(OutboxStatus status);
+
+    @Query(
+            nativeQuery = true,
+            value = "SELECT * FROM event_outbox WHERE status = 'PENDING' ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED"
+    )
+    List<OutboxMessage> findPendingBatch();
+
+    @Modifying
+    @Query("UPDATE OutboxMessage m SET m.status = com.example.paymentservice.constants.OutboxStatus.PENDING WHERE m.status = com.example.paymentservice.constants.OutboxStatus.PROCESSING AND m.updatedAt < :cutoff")
+    void resetStuckProcessing(@Param("cutoff") LocalDateTime cutoff);
 }
