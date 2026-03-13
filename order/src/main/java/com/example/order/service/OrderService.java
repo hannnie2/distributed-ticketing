@@ -11,16 +11,18 @@ import com.example.order.dto.CreateOrderOutDto;
 import com.example.order.entity.EmailOutboxMessage;
 import com.example.order.entity.Order;
 import com.example.order.entity.OutboxMessage;
+import com.example.order.exception.InvalidOrderStateException;
+import com.example.order.exception.InvalidSeatSelectionException;
+import com.example.order.exception.OrderNotFoundException;
+import com.example.order.exception.PaymentAlreadyInitiatedException;
 import com.example.order.repository.EmailOutboxRepository;
 import com.example.order.repository.OrderRepository;
 import com.example.order.repository.OutboxMessageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -43,7 +45,7 @@ public class OrderService {
                 .distinct()
                 .count();
         if (distinctRows > 1) {
-            throw new IllegalArgumentException("All seats in an order must belong to the same section and row");
+            throw new InvalidSeatSelectionException("All seats in an order must belong to the same section and row");
         }
 
         InventoryApi.InventoryHoldResponse response = inventoryApi.holdSeats(createOrderInDto.eventId(), createOrderInDto.seats());
@@ -70,14 +72,14 @@ public class OrderService {
     @Transactional
     public PaymentApi.PaymentResponse processPayment(Long orderId, String confirmationTokenId) {
         Order order = orderRepository.findByIdForUpdate(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
 
         if (order.getStatus() != OrderStatus.PENDING) {
-            throw new RuntimeException("Order is not in pending state");
+            throw new InvalidOrderStateException("Order is not in pending state");
         }
 
         if (order.getPaymentIntentId() != null) {
-            throw new RuntimeException("Payment already initiated for this order");
+            throw new PaymentAlreadyInitiatedException();
         }
 
         inventoryApi.isHoldActive(order.getHoldId());
@@ -120,14 +122,14 @@ public class OrderService {
     @Transactional
     public void abandonOrder(Long orderId) {
         Order order = orderRepository.findByIdForUpdate(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
 
         if (order.getStatus() != OrderStatus.PENDING) {
-            throw new RuntimeException("Order is not in a state that can be abandoned");
+            throw new InvalidOrderStateException("Order is not in a state that can be abandoned");
         }
 
         if (order.getPaymentIntentId() != null) {
-            throw new RuntimeException("Payment already initiated, cannot abandon");
+            throw new PaymentAlreadyInitiatedException();
         }
 
         order.setStatus(OrderStatus.CANCELLED);
@@ -200,7 +202,13 @@ public class OrderService {
     @RabbitListener(queues = RabbitQueue.INVENTORY_DEDUCTION_FAILED_QUEUE)
     @Transactional
     public void handleInventoryDeductionFailed(InventoryDeductionFailedEvent event) {
-        Long orderId = Long.parseLong((String) event.payload().get("orderId"));
+        Long orderId;
+        try {
+            orderId = Long.parseLong((String) event.payload().get("orderId"));
+        } catch (Exception e) {
+            log.error("Malformed inventory_deduction_failed payload, cannot parse orderId. payload={}", event.payload(), e);
+            throw e;
+        }
 
         Order order = orderRepository.findById(orderId).orElse(null);
         if (order == null) return;

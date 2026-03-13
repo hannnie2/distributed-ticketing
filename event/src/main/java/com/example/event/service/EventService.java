@@ -19,6 +19,7 @@ import com.example.event.repository.OutboxMessageRepository;
 import com.example.event.repository.VenueRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -141,19 +142,26 @@ public class EventService {
         return eventMapper.toResponse(eventRepository.save(event));
     }
 
-    /**
-     * Called by the scheduled-publish RabbitMQ listener.
-     * Idempotent: no-op if the event is not SCHEDULED (e.g. already manually published or cancelled).
-     */
-    public void publishScheduled(Long id) {
-        Event event = getOrThrow(id);
-        if (event.getStatus() != EventStatus.SCHEDULED) {
-            log.debug("Skipping scheduled publish — event {} has status {}", id, event.getStatus());
-            return;
+    public record ScheduledPublishMessage(Long eventId) {}
+
+    @RabbitListener(queues = RabbitConfig.SCHEDULED_PUBLISH_QUEUE)
+    public void handleScheduledPublish(ScheduledPublishMessage msg) {
+        log.debug("Scheduled publish triggered. eventId={}", msg.eventId());
+        try {
+            Event event = getOrThrow(msg.eventId());
+
+            if (event.getStatus() != EventStatus.SCHEDULED) {
+                log.debug("Skipping scheduled publish — event {} has status {}", msg.eventId(), event.getStatus());
+                return;
+            }
+
+            event.setStatus(EventStatus.PUBLISHED);
+            eventRepository.save(event);
+            log.info("Event {} automatically published", msg.eventId());
+        } catch (Exception e) {
+            log.error("Failed to auto-publish event. eventId={}", msg.eventId(), e);
+            throw e;
         }
-        event.setStatus(EventStatus.PUBLISHED);
-        eventRepository.save(event);
-        log.info("Event {} automatically published", id);
     }
 
     private void schedulePublish(Long eventId, LocalDateTime publishAt) {

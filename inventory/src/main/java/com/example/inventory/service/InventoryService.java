@@ -213,11 +213,12 @@ public class InventoryService {
 
             seatRepository.saveAll(seats);
 
-            log.info("Inventory deducted. orderId={}, section={}, row={}, seats={}", orderId, section, row, event.seats());
             outboxMessageRepository.save(outboxEntry(
                     RabbitConfig.INVENTORY_EXCHANGE,
                     RabbitConfig.INVENTORY_DEDUCTED_KEY,
                     Map.of("orderId", orderId)));
+
+            log.info("Inventory deducted. orderId={}, section={}, row={}, seats={}", orderId, section, row, event.seats());
         } catch (Exception e) {
             log.error("Unexpected error during inventory deduction. orderId={}, section={}, row={}", orderId, section, row, e);
             throw e;
@@ -302,13 +303,18 @@ public class InventoryService {
         List<String> offsets = event.seats().stream()
                 .map(n -> String.valueOf(n - 1))
                 .toList();
-        redisTemplate.execute(
-                releaseSeatsScript,
-                Collections.singletonList(rowKey),
-                offsets.toArray(new String[0])
-        );
-        log.debug("Released hold. eventId={}, section={}, row={}, seats={}",
-                event.eventId(), event.section(), event.row(), event.seats());
+        try {
+            redisTemplate.execute(
+                    releaseSeatsScript,
+                    Collections.singletonList(rowKey),
+                    offsets.toArray(new String[0])
+            );
+            log.debug("Released hold. eventId={}, section={}, row={}, seats={}",
+                    event.eventId(), event.section(), event.row(), event.seats());
+        } catch (Exception e) {
+            log.error("Failed to release hold in Redis — hold will expire naturally. eventId={}, section={}, row={}, seats={}",
+                    event.eventId(), event.section(), event.row(), event.seats(), e);
+        }
     }
 
     public record ShipOrderEvent(Long orderId) {

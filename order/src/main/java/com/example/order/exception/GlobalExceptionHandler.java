@@ -12,6 +12,26 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @Slf4j
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(OrderNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleOrderNotFound(OrderNotFoundException e) {
+        return Result.fail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(InvalidOrderStateException.class)
+    public ResponseEntity<ApiResponse<Void>> handleInvalidOrderState(InvalidOrderStateException e) {
+        return Result.fail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(PaymentAlreadyInitiatedException.class)
+    public ResponseEntity<ApiResponse<Void>> handlePaymentAlreadyInitiated(PaymentAlreadyInitiatedException e) {
+        return Result.fail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(InvalidSeatSelectionException.class)
+    public ResponseEntity<ApiResponse<Void>> handleInvalidSeatSelection(InvalidSeatSelectionException e) {
+        return Result.fail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
     @ExceptionHandler(SeatUnavailableException.class)
     public ResponseEntity<ApiResponse<Void>> handleSeatUnavailable(SeatUnavailableException e) {
         return Result.fail(HttpStatus.CONFLICT, e.getMessage());
