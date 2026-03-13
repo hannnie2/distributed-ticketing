@@ -311,6 +311,15 @@ public class InventoryService {
                 event.eventId(), event.section(), event.row(), event.seats());
     }
 
+    public record ShipOrderEvent(Long orderId) {
+    }
+
+    @RabbitListener(queues = RabbitConfig.SHIP_ORDER_QUEUE)
+    @Transactional
+    public void shipOrder(ShipOrderEvent event) {
+        log.info("Shipping order. orderId={}", event.orderId());
+    }
+
     public record WarmCacheEvent(Integer eventId) {
     }
 

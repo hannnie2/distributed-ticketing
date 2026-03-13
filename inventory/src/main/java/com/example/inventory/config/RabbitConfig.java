@@ -19,7 +19,9 @@ public class RabbitConfig {
     private static final String ORDER_PAID_KEY = "order_paid";
     public static final String ORDER_EXCHANGE = "x.order";
     private static final String ORDER_CANCELLED_KEY = "order_cancelled";
+    private static final String ORDER_CONFIRMED_KEY = "order_confirmed";
     private static final String HOLD_RELEASE_QUEUE = "q.inventory.hold_release";
+    public static final String SHIP_ORDER_QUEUE = "q.inventory.ship_order";
 
     @Bean
     public MessageConverter messageConverter() {
@@ -57,6 +59,17 @@ public class RabbitConfig {
     public Binding holdReleaseQueueBinding(Queue holdReleaseQueue, DirectExchange orderExchange) {
         return BindingBuilder.bind(holdReleaseQueue).to(orderExchange)
                 .with(ORDER_CANCELLED_KEY);
+    }
+
+    @Bean
+    public Queue shipOrderQueue() {
+        return QueueBuilder.durable(SHIP_ORDER_QUEUE).build();
+    }
+
+    @Bean
+    public Binding shipOrderQueueBinding(Queue shipOrderQueue, DirectExchange orderExchange) {
+        return BindingBuilder.bind(shipOrderQueue).to(orderExchange)
+                .with(ORDER_CONFIRMED_KEY);
     }
 
     @Bean

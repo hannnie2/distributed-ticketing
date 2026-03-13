@@ -1,12 +1,17 @@
 package com.example.order.entity;
 
 import com.example.order.constants.OutboxMessageStatus;
+import com.example.order.dto.SeatDto;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Entity
 @Table(name = "email_outbox")
@@ -23,8 +28,18 @@ public class EmailOutboxMessage {
     @Column(nullable = false)
     private String subject;
 
-    @Column(nullable = false, columnDefinition = "text")
-    private String htmlBody;
+    @Column(nullable = false)
+    private Long orderId;
+
+    @Column(nullable = false)
+    private int eventId;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb", nullable = false)
+    private List<SeatDto> seats;
+
+    @Column(nullable = false)
+    private BigDecimal amount;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

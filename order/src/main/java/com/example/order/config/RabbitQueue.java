@@ -19,4 +19,5 @@ public class RabbitQueue {
     public static final String INVENTORY_DEDUCTION_FAILED_QUEUE = "q.order.inventory_deduction_failed";
     public static final String INVENTORY_DEDUCTION_FAILED_KEY = "inventory_deduction_failed";
     public static final String ORDER_CANCELLED_KEY = "order_cancelled";
+    public static final String ORDER_CONFIRMED_KEY = "order_confirmed";
 }

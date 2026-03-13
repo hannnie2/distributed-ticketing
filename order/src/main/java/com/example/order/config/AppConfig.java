@@ -41,4 +41,10 @@ public class AppConfig {
         // preventing concurrent retry races that can cause a null paymentIntentId on the order.
         return buildClient(builder, url, Duration.ofSeconds(15));
     }
+
+    @Bean
+    public RestClient eventRestClient(RestClient.Builder builder,
+                                      @Value("${event.service.url:http://localhost:8083}") String url) {
+        return buildClient(builder, url, Duration.ofSeconds(3));
+    }
 }
