@@ -10,6 +10,8 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
+import java.util.List;
+
 
 @Configuration
 public class RedisConfig {
@@ -31,9 +33,10 @@ public class RedisConfig {
         return new LettuceConnectionFactory(new RedisStandaloneConfiguration("localhost", 6379));
     }
 
+    @SuppressWarnings("unchecked")
     @Bean
-    public RedisScript<Boolean> holdSeatsScript() {
-        return RedisScript.of(new ClassPathResource("scripts/hold_seats.lua"), Boolean.class);
+    public RedisScript<List<Object>> holdSeatsScript() {
+        return (RedisScript<List<Object>>) (RedisScript<?>) RedisScript.of(new ClassPathResource("scripts/hold_seats.lua"), List.class);
     }
 
     @Bean

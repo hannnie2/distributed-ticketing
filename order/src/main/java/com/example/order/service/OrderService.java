@@ -155,6 +155,7 @@ public class OrderService {
         payload.put("section", first.section());
         payload.put("row", first.row());
         payload.put("seats", seatNumbers);
+        payload.put("userId", "test_user");
         outboxMessageRepository.save(outboxEntry(RabbitQueue.ORDER_EXCHANGE, RabbitQueue.ORDER_CANCELLED_KEY, payload));
     }
 

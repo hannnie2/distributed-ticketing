@@ -34,8 +34,10 @@ import java.util.stream.Collectors;
 public class InventoryService {
     private final RedisTemplate<String, String> redisTemplate;
     private final SeatRepository seatRepository;
-    private final RedisScript<Boolean> holdSeatsScript;
+    private final RedisScript<List<Object>> holdSeatsScript;
     private final RedisScript<Boolean> releaseSeatsScript;
+
+    private static final long HOLD_TTL_SECONDS = 600; // 10 minutes
     private final OutboxMessageRepository outboxMessageRepository;
 
     public HoldSeatsOutDto holdSeats(HoldSeatsInDto holdSeatsInDto) {
@@ -52,18 +54,49 @@ public class InventoryService {
                 .distinct()
                 .toList();
 
-        Boolean ok = redisTemplate.execute(
+        UUID holdId = UUID.randomUUID();
+        String userId = "test_user";
+        String holdLookupKey = "hold:lookup:" + userId + ":" + eventId;
+        String holdKey = "hold:" + holdId;
+
+        List<String> argv = new ArrayList<>();
+        argv.add(holdId.toString());
+        argv.add(userId);
+        argv.add(String.valueOf(eventId));
+        argv.add(sectionRow);
+        argv.add(String.valueOf(HOLD_TTL_SECONDS));
+        argv.addAll(offsets);
+
+        List<Object> result = redisTemplate.execute(
                 holdSeatsScript,
-                List.of(rowKey, rowKey + ":cap"),
-                offsets.toArray(new String[0])
+                List.of(rowKey, rowKey + ":cap", holdLookupKey, holdKey),
+                argv.toArray(new String[0])
         );
 
-        if (!ok) {
+        if (result.isEmpty()) {
+            throw new IllegalStateException("Redis hold script returned no result");
+        }
+
+        long status = (Long) result.get(0);
+
+        if (status == 0) {
             log.debug("Seat hold failed. eventId={}, section={}, row={}, seats={}",
                     eventId, first.section(), first.row(), offsets);
             throw new SeatUnavailableException("Seats unavailable");
         }
 
+        long ttlSeconds;
+
+        if (status == 2) {
+            // existing hold found (idempotent retry)
+            holdId = UUID.fromString((String) result.get(1));
+            ttlSeconds = (Long) result.get(2);
+            log.debug("Existing hold found on retry. holdId={}, eventId={}", holdId, eventId);
+        } else {
+            ttlSeconds = HOLD_TTL_SECONDS;
+        }
+
+        // price lookup — if this fails, client retries and the script is idempotent
         List<String> seatNumbers = seats.stream()
                 .map(s -> String.valueOf(s.number()))
                 .toList();
@@ -79,21 +112,9 @@ public class InventoryService {
             seatPrices.add(new SeatPriceDto(first.section(), first.row(), seat.number(), price));
         }
 
-        UUID holdId = UUID.randomUUID();
-        String key = "hold:" + holdId;
-
-        Map<String, String> hash = Map.of(
-                "userId", "test_user",
-                "eventId", String.valueOf(eventId),
-                "row", sectionRow,
-                "seats", String.join(",", offsets));
-
-        redisTemplate.opsForHash().putAll(key, hash);
-        redisTemplate.expire(key, Duration.ofMinutes(10));
-
         return new HoldSeatsOutDto(
                 holdId,
-                Instant.now().plus(Duration.ofMinutes(10)),
+                Instant.now().plus(Duration.ofSeconds(ttlSeconds)),
                 seatPrices
         );
     }
@@ -233,7 +254,8 @@ public class InventoryService {
             Integer eventId,
             Integer section,
             String row,
-            List<Integer> seats
+            List<Integer> seats,
+            String userId
     ) {
     }
 
@@ -244,9 +266,14 @@ public class InventoryService {
                 .map(n -> String.valueOf(n - 1))
                 .toList();
         try {
+            List<String> keys = new ArrayList<>();
+            keys.add(rowKey);
+            if (event.userId() != null) {
+                keys.add("hold:lookup:" + event.userId() + ":" + event.eventId());
+            }
             redisTemplate.execute(
                     releaseSeatsScript,
-                    Collections.singletonList(rowKey),
+                    keys,
                     offsets.toArray(new String[0])
             );
             log.debug("Released hold. eventId={}, section={}, row={}, seats={}",
