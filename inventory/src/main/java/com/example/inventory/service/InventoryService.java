@@ -98,66 +98,6 @@ public class InventoryService {
         );
     }
 
-    private record HoldRecord(String holdId, String userId, int eventId, int section, String row, List<Integer> seats) {
-    }
-
-//    @Nullable
-//    private HoldRecord verifyHold(String holdId, String userId) {
-//        String key = "hold:" + holdId;
-//
-//        List<Object> v = redisTemplate.opsForHash().multiGet(
-//                key, List.of("userId", "eventId", "row", "seats")
-//        );
-//
-//        if (v == null || v.size() < 4) return null;
-//
-//        String storedUserId = (String) v.get(0);
-//        String eventIdStr = (String) v.get(1);
-//        String sectionRowStr = (String) v.get(2);
-//        String seatsStr = (String) v.get(3);
-//
-//        if (storedUserId == null || eventIdStr == null || sectionRowStr == null || seatsStr == null) return null;
-//
-//        if (!userId.equals(storedUserId)) return null;
-//
-//        String[] sectionRow = sectionRowStr.split(":");
-//
-//        if (sectionRow.length != 2) return null;
-//
-//        String sectionStr = sectionRow[0].trim();
-//        String row = sectionRow[1].trim();
-//        if (sectionStr.isEmpty() || row.isEmpty()) return null;
-//
-//        int section;
-//        try {
-//            section = Integer.parseInt(sectionStr);
-//        } catch (NumberFormatException e) {
-//            return null;
-//        }
-//
-//        int eventId;
-//        try {
-//            eventId = Integer.parseInt(eventIdStr);
-//        } catch (NumberFormatException e) {
-//            return null;
-//        }
-//
-//        List<Integer> seats;
-//        try {
-//            seats = Arrays.stream(seatsStr.split(","))
-//                    .map(String::trim)
-//                    .filter(s -> !s.isEmpty())
-//                    .map(Integer::parseInt)
-//                    .toList();
-//        } catch (NumberFormatException e) {
-//            return null;
-//        }
-//
-//        if (seats.isEmpty()) return null;
-//
-//        return new HoldRecord(holdId, storedUserId, eventId, section, row, seats);
-//    }
-
     public record InventoryDeductionEvent(
             String orderId,
             Integer eventId,

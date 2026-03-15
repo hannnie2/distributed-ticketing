@@ -69,9 +69,8 @@ public class OrderService {
         return new CreateOrderOutDto(response.holdId(), response.expiresAt());
     }
 
-    @Transactional
     public PaymentApi.PaymentResponse processPayment(Long orderId, String confirmationTokenId) {
-        Order order = orderRepository.findByIdForUpdate(orderId)
+        Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
 
         if (order.getStatus() != OrderStatus.PENDING) {
@@ -87,8 +86,14 @@ public class OrderService {
         PaymentApi.PaymentResponse response = paymentApi.processPayment(
                 orderId, order.getAmount(), "cad", confirmationTokenId);
 
-        order.setPaymentIntentId(response.paymentIntentId());
-        orderRepository.save(order);
+        if ("failed".equals(response.status())) {
+            return response;
+        }
+
+        int updated = orderRepository.savePaymentResult(orderId, response.paymentIntentId(), OrderStatus.PENDING);
+        if (updated == 0) {
+            log.warn("Order {} payment result already saved by a concurrent request, skipping", orderId);
+        }
 
         return response;
     }

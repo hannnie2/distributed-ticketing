@@ -7,9 +7,7 @@ import com.example.paymentservice.entity.OutboxMessage;
 import com.example.paymentservice.entity.Payment;
 import com.example.paymentservice.repository.OutboxMessageRepository;
 import com.example.paymentservice.repository.PaymentRepository;
-import com.stripe.exception.ApiConnectionException;
-import com.stripe.exception.SignatureVerificationException;
-import com.stripe.exception.StripeException;
+import com.stripe.exception.*;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.StripeObject;
@@ -19,20 +17,23 @@ import com.stripe.param.PaymentIntentCreateParams;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.Optional;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
+@RequiredArgsConstructor
 public class PaymentService {
 
     private final OutboxMessageRepository outboxMessageRepository;
     private final PaymentRepository paymentRepository;
+    private final TransactionTemplate txTemplate;
 
     @Value("${stripe.webhook-secret}")
     private String webhookSecret;
@@ -40,68 +41,92 @@ public class PaymentService {
     public record PaymentResult(String paymentIntentId, String status, String clientSecret) {
     }
 
-    @Transactional
     public PaymentResult createAndConfirm(Long orderId, BigDecimal amount, String currency, String confirmationTokenId) {
-        Optional<Payment> existing = paymentRepository.findByOrderId(orderId);
-        if (existing.isPresent() && existing.get().getStatus() == PaymentStatus.SUCCEEDED) {
-            Payment p = existing.get();
+        Payment payment = txTemplate.execute(status -> {
+            Optional<Payment> existing = paymentRepository.findByOrderId(orderId);
+            if (existing.isPresent()) return existing.get();
+
+            Payment p = new Payment();
+            p.setOrderId(orderId);
+            p.setAmount(amount);
+            p.setCurrency(currency);
+            p.setStatus(PaymentStatus.PENDING);
+            try {
+                paymentRepository.saveAndFlush(p);
+            } catch (DataIntegrityViolationException e) {
+                return paymentRepository.findByOrderId(orderId).get();
+            }
+            return p;
+        });
+
+        if (payment.getStatus() == PaymentStatus.SUCCEEDED) {
             log.debug("Returning existing succeeded payment for orderId={}", orderId);
-            return new PaymentResult(p.getPaymentIntentId(), "succeeded", null);
+            return new PaymentResult(payment.getPaymentIntentId(), "succeeded", null);
         }
 
-        Payment payment = existing.orElseGet(Payment::new);
-        payment.setOrderId(orderId);
-        payment.setAmount(amount);
-        payment.setCurrency(currency);
-        payment.setStatus(PaymentStatus.PENDING);
-        paymentRepository.save(payment);
+        long amountInCents = amount.multiply(BigDecimal.valueOf(100)).longValue();
 
+        PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
+                .setAutomaticPaymentMethods(
+                        PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
+                                .setEnabled(true)
+                                .build()
+                )
+                .setAmount(amountInCents)
+                .setCurrency(currency)
+                .setConfirmationToken(confirmationTokenId)
+                .setConfirm(true)
+                .setReturnUrl("http://localhost:3000/order-confirmation")
+                .putMetadata("orderId", String.valueOf(orderId))
+                .build();
+
+        RequestOptions requestOptions = RequestOptions.builder()
+                .setIdempotencyKey("order-" + orderId + "-" + confirmationTokenId)
+                .setMaxNetworkRetries(2)
+                .build();
+
+        PaymentIntent intent;
         try {
-            long amountInCents = amount.multiply(BigDecimal.valueOf(100)).longValue();
+            intent = PaymentIntent.create(params, requestOptions);
+        } catch (CardException e) {
+            log.error("Stripe card error for orderId={}: {}", orderId, e.getMessage());
+            return new PaymentResult(null, "failed", null);
+        } catch (ApiConnectionException | RateLimitException e) {
+            log.error("Transient Stripe error for orderId={}: {}", orderId, e.getMessage());
+            throw new RuntimeException("Stripe temporarily unavailable, please retry", e);
+        } catch (ApiException e) {
+            log.error("Stripe internal error for orderId={}: {}", orderId, e.getMessage());
+            throw new RuntimeException("Stripe internal error, please retry", e);
+        } catch (StripeException e) {
+            // InvalidRequestException, AuthenticationException, etc. not retryable
+            log.error("Non-retryable Stripe error for orderId={}: {}", orderId, e.getMessage());
+            return new PaymentResult(null, "failed", null);
+        } catch (Exception e) {
+            log.error("Unexpected error for orderId={}: {}", orderId, e.getMessage());
+            throw e;
+        }
 
-            PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                    .setAmount(amountInCents)
-                    .setCurrency(currency)
-                    .setConfirmationToken(confirmationTokenId)
-                    .setConfirm(true)
-                    .setReturnUrl("http://localhost:3000/order-confirmation")
-                    .putMetadata("orderId", String.valueOf(orderId))
-                    .build();
+        log.info("PaymentIntent created. id={}, status={}, orderId={}", intent.getId(), intent.getStatus(), orderId);
 
-            RequestOptions requestOptions = RequestOptions.builder()
-                    .setIdempotencyKey("order-" + orderId)
-                    .setMaxNetworkRetries(2)
-                    .build();
+        PaymentStatus paymentStatus = switch (intent.getStatus()) {
+            case "succeeded" -> PaymentStatus.SUCCEEDED;
+            case "requires_action" -> PaymentStatus.REQUIRES_ACTION;
+            default -> throw new IllegalStateException(
+                    "Unexpected PaymentIntent status: " + intent.getStatus() + " for orderId=" + orderId);
+        };
 
-            PaymentIntent intent = PaymentIntent.create(params, requestOptions);
-
-            log.info("PaymentIntent created. id={}, status={}, orderId={}", intent.getId(), intent.getStatus(), orderId);
-
-            PaymentStatus paymentStatus = switch (intent.getStatus()) {
-                case "succeeded" -> PaymentStatus.SUCCEEDED;
-                case "requires_action", "processing" -> PaymentStatus.PENDING;
-                default -> PaymentStatus.FAILED;
-            };
-
-            payment.setPaymentIntentId(intent.getId());
-            payment.setStatus(paymentStatus);
-            paymentRepository.save(payment);
+        txTemplate.executeWithoutResult(status -> {
+            Payment p = paymentRepository.findByOrderId(orderId).orElseThrow();
+            p.setPaymentIntentId(intent.getId());
+            p.setStatus(paymentStatus);
+            paymentRepository.save(p);
 
             if (paymentStatus == PaymentStatus.SUCCEEDED) {
                 publishPaymentSucceeded(orderId);
             }
+        });
 
-            return new PaymentResult(intent.getId(), intent.getStatus(), intent.getClientSecret());
-
-        } catch (ApiConnectionException e) {
-            log.error("Network error connecting to Stripe for orderId={}: {}", orderId, e.getMessage());
-            throw new RuntimeException("Stripe connection error, please retry", e);
-        } catch (StripeException e) {
-            payment.setStatus(PaymentStatus.FAILED);
-            paymentRepository.save(payment);
-            log.error("Stripe payment failed for orderId={}: {}", orderId, e.getMessage());
-            return new PaymentResult(null, "failed", null);
-        }
+        return new PaymentResult(intent.getId(), intent.getStatus(), intent.getClientSecret());
     }
 
     @Transactional
@@ -132,8 +157,9 @@ public class PaymentService {
             return;
         }
 
-        if (payment.getStatus() == PaymentStatus.SUCCEEDED) {
-            log.debug("Payment already marked succeeded, skipping. paymentIntentId={}", intent.getId());
+        if (payment.getStatus() != PaymentStatus.REQUIRES_ACTION) {
+            log.debug("Payment for orderId={} is in status {}, skipping webhook. paymentIntentId={}",
+                    payment.getOrderId(), payment.getStatus(), intent.getId());
             return;
         }
 
@@ -141,7 +167,8 @@ public class PaymentService {
         paymentRepository.save(payment);
 
         publishPaymentSucceeded(payment.getOrderId());
-        log.info("Order confirmed via webhook. orderId={}, paymentIntentId={}", payment.getOrderId(), intent.getId());
+        log.info("Required action completed, payment succeeded via webhook. orderId={}, paymentIntentId={}",
+                payment.getOrderId(), intent.getId());
     }
 
     private void publishPaymentSucceeded(Long orderId) {
