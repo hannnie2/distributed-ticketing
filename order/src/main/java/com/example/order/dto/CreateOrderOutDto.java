@@ -2,5 +2,5 @@ package com.example.order.dto;
 
 import java.time.Instant;
 
-public record CreateOrderOutDto(String holdId, Instant expiresAt) {
+public record CreateOrderOutDto(Long orderId, String holdId, Instant expiresAt) {
 }

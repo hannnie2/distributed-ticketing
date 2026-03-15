@@ -21,8 +21,10 @@ import com.example.order.repository.OutboxMessageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -37,8 +39,9 @@ public class OrderService {
     private final PaymentApi paymentApi;
     private final OutboxMessageRepository outboxMessageRepository;
     private final EmailOutboxRepository emailOutboxRepository;
+    private final TransactionTemplate transactionTemplate;
+    private final ApplicationEventPublisher eventPublisher;
 
-    @Transactional
     public CreateOrderOutDto createOrder(CreateOrderInDto createOrderInDto) {
         long distinctRows = createOrderInDto.seats().stream()
                 .map(s -> s.get("section") + ":" + s.get("row"))
@@ -50,23 +53,27 @@ public class OrderService {
 
         InventoryApi.InventoryHoldResponse response = inventoryApi.holdSeats(createOrderInDto.eventId(), createOrderInDto.seats());
 
-        Order order = new Order();
-        order.setEventId(createOrderInDto.eventId());
-        order.setUserEmail(createOrderInDto.userEmail());
-        order.setSeats(response.seats());
-        order.setAmount(calculateAmount(response.seats()));
-        order.setStatus(OrderStatus.PENDING);
-        order.setHoldId(response.holdId());
+        Order createdOrder = transactionTemplate.execute(status -> {
+            Order order = new Order();
+            order.setEventId(createOrderInDto.eventId());
+            order.setUserEmail(createOrderInDto.userEmail());
+            order.setSeats(response.seats());
+            order.setAmount(calculateAmount(response.seats()));
+            order.setStatus(OrderStatus.PENDING);
+            order.setHoldId(response.holdId());
 
-        orderRepository.save(order);
-        log.info("Order created. orderId={}, eventId={}", order.getId(), order.getEventId());
+            orderRepository.save(order);
+            log.info("Order created. orderId={}, eventId={}", order.getId(), order.getEventId());
 
-        outboxMessageRepository.save(outboxEntry(
-                RabbitQueue.ORDER_EXCHANGE,
-                RabbitQueue.ORDER_PENDING_CREATED_KEY,
-                Map.of("orderId", order.getId())));
+            outboxMessageRepository.save(outboxEntry(
+                    RabbitQueue.ORDER_EXCHANGE,
+                    RabbitQueue.ORDER_PENDING_CREATED_KEY,
+                    Map.of("orderId", order.getId())));
 
-        return new CreateOrderOutDto(response.holdId(), response.expiresAt());
+            return order;
+        });
+
+        return new CreateOrderOutDto(createdOrder.getId(), response.holdId(), response.expiresAt());
     }
 
     public PaymentApi.PaymentResponse processPayment(Long orderId, String confirmationTokenId) {
@@ -121,6 +128,7 @@ public class OrderService {
         order.setStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
         publishHoldRelease(order);
+        eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CANCELLED));
         log.info("Order {} cancelled due to expiry", orderId);
     }
 
@@ -139,8 +147,9 @@ public class OrderService {
 
         order.setStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
-        log.info("Order abandoned. orderId={}", orderId);
         publishHoldRelease(order);
+        eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CANCELLED));
+        log.info("Order abandoned. orderId={}", orderId);
     }
 
     private void publishHoldRelease(Order order) {
@@ -196,6 +205,7 @@ public class OrderService {
                 RabbitQueue.ORDER_EXCHANGE,
                 RabbitQueue.ORDER_CONFIRMED_KEY,
                 Map.of("orderId", orderId)));
+        eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CONFIRMED));
         log.info("Order {} confirmed", orderId);
     }
 
@@ -223,6 +233,7 @@ public class OrderService {
 
         order.setStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
+        eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CANCELLED));
         log.error("Inventory deduction failed for order {}. Order cancelled. Manual refund may be required.", orderId);
     }
 
