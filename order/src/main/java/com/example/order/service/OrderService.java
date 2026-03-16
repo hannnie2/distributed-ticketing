@@ -212,19 +212,13 @@ public class OrderService {
     public record InventoryDeductionInitiationEvent(long orderId) {
     }
 
-    public record InventoryDeductionFailedEvent(Map<String, Object> payload) {
+    public record InventoryDeductionFailedEvent(long orderId) {
     }
 
     @RabbitListener(queues = RabbitQueue.INVENTORY_DEDUCTION_FAILED_QUEUE)
     @Transactional
     public void handleInventoryDeductionFailed(InventoryDeductionFailedEvent event) {
-        Long orderId;
-        try {
-            orderId = Long.parseLong((String) event.payload().get("orderId"));
-        } catch (Exception e) {
-            log.error("Malformed inventory_deduction_failed payload, cannot parse orderId. payload={}", event.payload(), e);
-            throw e;
-        }
+        long orderId = event.orderId();
 
         Order order = orderRepository.findById(orderId).orElse(null);
         if (order == null) return;
