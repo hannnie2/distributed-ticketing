@@ -183,7 +183,7 @@ public class OrderService {
     public void confirmOrder(OrderConfirmationEvent event) {
         long orderId = event.orderId();
 
-        Order order = orderRepository.findById(orderId).orElse(null);
+        Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
 
         if (order == null) return;
 
@@ -220,7 +220,7 @@ public class OrderService {
     public void handleInventoryDeductionFailed(InventoryDeductionFailedEvent event) {
         long orderId = event.orderId();
 
-        Order order = orderRepository.findById(orderId).orElse(null);
+        Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
         if (order == null) return;
 
         if (order.getStatus() == OrderStatus.CONFIRMED || order.getStatus() == OrderStatus.CANCELLED) return;
@@ -237,7 +237,7 @@ public class OrderService {
     public void initiateInventoryDeduction(InventoryDeductionInitiationEvent event) {
         Long orderId = event.orderId();
 
-        Order order = orderRepository.findById(orderId).orElse(null);
+        Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
 
         if (order == null) return;
 
@@ -261,6 +261,9 @@ public class OrderService {
         payload.put("seats", seatNumbers);
 
         outboxMessageRepository.save(outboxEntry(RabbitQueue.PAYMENT_EXCHANGE, "order_paid", payload));
+
+        order.setStatus(OrderStatus.PROCESSING);
+        orderRepository.save(order);
     }
 
     private OutboxMessage outboxEntry(String exchange, String routingKey, Map<String, Object> payload) {
