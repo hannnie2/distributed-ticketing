@@ -10,12 +10,15 @@ import com.example.paymentservice.repository.PaymentRepository;
 import com.stripe.exception.*;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.Refund;
 import com.stripe.model.StripeObject;
 import com.stripe.net.RequestOptions;
 import com.stripe.net.Webhook;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.RefundCreateParams;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -169,6 +172,45 @@ public class PaymentService {
         publishPaymentSucceeded(payment.getOrderId());
         log.info("Required action completed, payment succeeded via webhook. orderId={}, paymentIntentId={}",
                 payment.getOrderId(), intent.getId());
+    }
+
+    public record RefundRequiredEvent(Long orderId) {}
+
+    @RabbitListener(queues = "q.payment.refund_required")
+    @Transactional
+    public void handleRefundRequired(RefundRequiredEvent event) {
+        Long orderId = event.orderId();
+        Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
+        if (payment == null) {
+            log.warn("No payment record found for orderId={}, nothing to refund", orderId);
+            return;
+        }
+        if (payment.getStatus() == PaymentStatus.REFUNDED) {
+            log.debug("Payment already refunded for orderId={}", orderId);
+            return;
+        }
+        if (payment.getStatus() != PaymentStatus.SUCCEEDED) {
+            log.warn("Payment for orderId={} is in status {}, no refund needed", orderId, payment.getStatus());
+            return;
+        }
+        try {
+            Refund refund = Refund.create(
+                    RefundCreateParams.builder()
+                            .setPaymentIntent(payment.getPaymentIntentId())
+                            .build(),
+                    RequestOptions.builder()
+                            .setIdempotencyKey("refund-order-" + orderId)
+                            .build());
+            payment.setRefundId(refund.getId());
+            payment.setStatus(PaymentStatus.REFUNDED);
+            paymentRepository.save(payment);
+            log.info("Refund issued. orderId={}, paymentIntentId={}, refundId={}",
+                    orderId, payment.getPaymentIntentId(), refund.getId());
+        } catch (StripeException e) {
+            log.error("Stripe refund failed. orderId={}, paymentIntentId={} — manual refund required",
+                    orderId, payment.getPaymentIntentId(), e);
+            throw new RuntimeException("Refund failed for orderId=" + orderId, e);
+        }
     }
 
     private void publishPaymentSucceeded(Long orderId) {

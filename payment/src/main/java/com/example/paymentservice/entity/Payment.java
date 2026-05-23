@@ -22,6 +22,8 @@ public class Payment {
 
     private String paymentIntentId;
 
+    private String refundId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private PaymentStatus status = PaymentStatus.PENDING;

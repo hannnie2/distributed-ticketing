@@ -63,25 +63,36 @@ public class OrderService {
         }
 
         metricsService.incrementOrderCreated();
-        Order createdOrder = transactionTemplate.execute(status -> {
-            Order order = new Order();
-            order.setEventId(createOrderInDto.eventId());
-            order.setUserEmail(createOrderInDto.userEmail());
-            order.setSeats(response.seats());
-            order.setAmount(calculateAmount(response.seats()));
-            order.setStatus(OrderStatus.PENDING);
-            order.setHoldId(response.holdId());
+        Order createdOrder;
+        try {
+            createdOrder = transactionTemplate.execute(status -> {
+                Order order = new Order();
+                order.setEventId(createOrderInDto.eventId());
+                order.setUserEmail(createOrderInDto.userEmail());
+                order.setSeats(response.seats());
+                order.setAmount(calculateAmount(response.seats()));
+                order.setStatus(OrderStatus.PENDING);
+                order.setHoldId(response.holdId());
 
-            orderRepository.save(order);
-            log.info("Order created. orderId={}, eventId={}", order.getId(), order.getEventId());
+                orderRepository.save(order);
+                log.info("Order created. orderId={}, eventId={}", order.getId(), order.getEventId());
 
-            outboxMessageRepository.save(outboxEntry(
-                    RabbitQueue.ORDER_EXCHANGE,
-                    RabbitQueue.ORDER_PENDING_CREATED_KEY,
-                    Map.of("orderId", order.getId())));
+                outboxMessageRepository.save(outboxEntry(
+                        RabbitQueue.ORDER_EXCHANGE,
+                        RabbitQueue.ORDER_PENDING_CREATED_KEY,
+                        Map.of("orderId", order.getId())));
 
-            return order;
-        });
+                return order;
+            });
+        } catch (Exception e) {
+            log.error("Order DB write failed. holdId={} will expire naturally", response.holdId(), e);
+            throw new RuntimeException("Order creation failed, please retry", e);
+        }
+
+        if (createdOrder == null) {
+            log.error("Order transaction was rolled back. holdId={} will expire naturally", response.holdId());
+            throw new RuntimeException("Order creation failed, please retry");
+        }
 
         return new CreateOrderOutDto(createdOrder.getId(), response.holdId(), response.expiresAt());
     }
@@ -212,8 +223,8 @@ public class OrderService {
             return;
         }
 
-        if (order.getStatus() == OrderStatus.CANCELLED) {
-            log.warn("Order {} is CANCELLED, ignoring late inventory_deducted event", orderId);
+        if (order.getStatus() != OrderStatus.PROCESSING) {
+            log.warn("Order {} in unexpected state {} during confirmation, skipping", orderId, order.getStatus());
             return;
         }
 
@@ -249,9 +260,19 @@ public class OrderService {
 
         order.setStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
+
+        if (order.getPaymentIntentId() != null) {
+            outboxMessageRepository.save(outboxEntry(
+                    RabbitQueue.PAYMENT_EXCHANGE,
+                    RabbitQueue.REFUND_REQUIRED_KEY,
+                    Map.of("orderId", orderId)));
+            log.error("Inventory deduction failed, order cancelled, refund queued. orderId={}", orderId);
+        } else {
+            log.error("Inventory deduction failed, order cancelled. orderId={}", orderId);
+        }
+
         metricsService.incrementOrderFailure("inventory_deduction_failed");
         eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CANCELLED));
-        log.error("Inventory deduction failed for order {}. Order cancelled. Manual refund may be required.", orderId);
     }
 
     // after payment succeeded
