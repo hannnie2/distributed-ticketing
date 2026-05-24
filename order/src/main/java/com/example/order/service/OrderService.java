@@ -41,7 +41,6 @@ public class OrderService {
     private final EmailOutboxRepository emailOutboxRepository;
     private final TransactionTemplate transactionTemplate;
     private final ApplicationEventPublisher eventPublisher;
-    private final MetricsService metricsService;
 
     public CreateOrderOutDto createOrder(CreateOrderInDto createOrderInDto) {
         long distinctRows = createOrderInDto.seats().stream()
@@ -52,17 +51,9 @@ public class OrderService {
             throw new InvalidSeatSelectionException("All seats in an order must belong to the same section and row");
         }
 
-        metricsService.incrementSeatHoldRequests();
-        InventoryApi.InventoryHoldResponse response;
-        try {
-            response = inventoryApi.holdSeats(createOrderInDto.eventId(), createOrderInDto.seats());
-            metricsService.incrementSeatHoldSuccess();
-        } catch (Exception e) {
-            metricsService.incrementSeatHoldFailure();
-            throw e;
-        }
+        InventoryApi.InventoryHoldResponse response = inventoryApi.holdSeats(
+                createOrderInDto.eventId(), createOrderInDto.seats());
 
-        metricsService.incrementOrderCreated();
         Order createdOrder;
         try {
             createdOrder = transactionTemplate.execute(status -> {
@@ -111,21 +102,13 @@ public class OrderService {
 
         inventoryApi.isHoldActive(order.getHoldId());
 
-        metricsService.incrementPaymentRequests();
-        PaymentApi.PaymentResponse response;
-        try {
-            response = paymentApi.processPayment(orderId, order.getAmount(), "cad", confirmationTokenId);
-        } catch (Exception e) {
-            metricsService.incrementPaymentFailure();
-            throw e;
-        }
+        PaymentApi.PaymentResponse response = paymentApi.processPayment(
+                orderId, order.getAmount(), "cad", confirmationTokenId);
 
         if ("failed".equals(response.status())) {
-            metricsService.incrementPaymentFailure();
             return response;
         }
 
-        metricsService.incrementPaymentSuccess();
         int updated = orderRepository.savePaymentResult(orderId, response.paymentIntentId(), OrderStatus.PENDING);
         if (updated == 0) {
             log.warn("Order {} payment result already saved by a concurrent request, skipping", orderId);
@@ -157,7 +140,6 @@ public class OrderService {
         order.setStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
         publishHoldRelease(order);
-        metricsService.incrementOrderFailure("expired");
         eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CANCELLED));
         log.info("Order {} cancelled due to expiry", orderId);
     }
@@ -178,7 +160,6 @@ public class OrderService {
         order.setStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
         publishHoldRelease(order);
-        metricsService.incrementOrderFailure("abandoned");
         eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CANCELLED));
         log.info("Order abandoned. orderId={}", orderId);
     }
@@ -232,12 +213,10 @@ public class OrderService {
         orderRepository.save(order);
 
         emailOutboxRepository.save(confirmationEmail(order));
-        metricsService.incrementEmailRequests("confirmation");
         outboxMessageRepository.save(outboxEntry(
                 RabbitQueue.ORDER_EXCHANGE,
                 RabbitQueue.ORDER_CONFIRMED_KEY,
                 Map.of("orderId", orderId)));
-        metricsService.incrementOrderCompleted();
         eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CONFIRMED));
         log.info("Order {} confirmed", orderId);
     }
@@ -271,7 +250,6 @@ public class OrderService {
             log.error("Inventory deduction failed, order cancelled. orderId={}", orderId);
         }
 
-        metricsService.incrementOrderFailure("inventory_deduction_failed");
         eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.CANCELLED));
     }
 
