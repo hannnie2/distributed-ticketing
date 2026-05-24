@@ -54,11 +54,12 @@ public class InventoryApi {
                     delay = 200,
                     multiplier = 2
             ))
-    public InventoryHoldResponse holdSeats(int eventId, List<Map<String, Object>> seats) {
+    public InventoryHoldResponse holdSeats(int eventId, List<Map<String, Object>> seats, String userId) {
         InventoryHoldRequest req = new InventoryHoldRequest(eventId, seats);
 
         ApiResponse<InventoryHoldResponse> response = restClient.post()
                 .uri("api/v1/holds")
+                .header("x-user-id", userId)
                 .body(req)
                 .retrieve()
                 .onStatus(status -> status.value() == 409,

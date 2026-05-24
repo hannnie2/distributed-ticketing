@@ -18,8 +18,10 @@ public class InventoryController {
     private final InventoryService inventoryService;
 
     @PostMapping("/holds")
-    public ResponseEntity<?> hold(@Valid @RequestBody HoldSeatsInDto holdSeatsInDto) {
-        return Result.success("Seats held", inventoryService.holdSeats(holdSeatsInDto));
+    public ResponseEntity<?> hold(
+            @RequestHeader("x-user-id") String userId,
+            @Valid @RequestBody HoldSeatsInDto holdSeatsInDto) {
+        return Result.success("Seats held", inventoryService.holdSeats(userId, holdSeatsInDto));
     }
 
     @GetMapping("/holds/{holdId}")

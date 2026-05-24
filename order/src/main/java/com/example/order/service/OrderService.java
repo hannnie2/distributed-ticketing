@@ -43,7 +43,7 @@ public class OrderService {
     private final TransactionTemplate transactionTemplate;
     private final ApplicationEventPublisher eventPublisher;
 
-    public CreateOrderOutDto createOrder(CreateOrderInDto createOrderInDto) {
+    public CreateOrderOutDto createOrder(String userId, CreateOrderInDto createOrderInDto) {
         long distinctRows = createOrderInDto.seats().stream()
                 .map(s -> s.get("section") + ":" + s.get("row"))
                 .distinct()
@@ -53,13 +53,14 @@ public class OrderService {
         }
 
         InventoryApi.InventoryHoldResponse response = inventoryApi.holdSeats(
-                createOrderInDto.eventId(), createOrderInDto.seats());
+                createOrderInDto.eventId(), createOrderInDto.seats(), userId);
 
         Order createdOrder;
         try {
             createdOrder = transactionTemplate.execute(status -> {
                 Order order = new Order();
                 order.setEventId(createOrderInDto.eventId());
+                order.setUserId(userId);
                 order.setUserEmail(createOrderInDto.userEmail());
                 order.setSeats(response.seats());
                 order.setAmount(calculateAmount(response.seats()));
@@ -238,7 +239,7 @@ public class OrderService {
         payload.put("section", first.section());
         payload.put("row", first.row());
         payload.put("seats", seatNumbers);
-        payload.put("userId", "test_user");
+        payload.put("userId", order.getUserId());
         outboxMessageRepository.save(outboxEntry(RabbitQueue.ORDER_EXCHANGE, RabbitQueue.ORDER_CANCELLED_KEY, payload));
     }
 

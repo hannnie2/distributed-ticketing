@@ -38,6 +38,9 @@ public class Order {
     private String paymentIntentId;
 
     @Column(nullable = false)
+    private String userId;
+
+    @Column(nullable = false)
     private String userEmail;
 
     @Column(nullable = false, unique = true)

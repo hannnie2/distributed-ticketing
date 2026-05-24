@@ -19,8 +19,10 @@ public class OrderController {
     private final OrderStatusService orderStatusService;
 
     @PostMapping
-    public ResponseEntity<?> createOrder(@RequestBody CreateOrderInDto createOrderInDto) {
-        return Result.success("Order created", orderService.createOrder(createOrderInDto));
+    public ResponseEntity<?> createOrder(
+            @RequestHeader("x-user-id") String userId,
+            @RequestBody CreateOrderInDto createOrderInDto) {
+        return Result.success("Order created", orderService.createOrder(userId, createOrderInDto));
     }
 
     @GetMapping("/{id}/status")

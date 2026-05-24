@@ -40,7 +40,7 @@ public class InventoryService {
     private static final long HOLD_TTL_SECONDS = 600; // 10 minutes
     private final OutboxMessageRepository outboxMessageRepository;
 
-    public HoldSeatsOutDto holdSeats(HoldSeatsInDto holdSeatsInDto) {
+    public HoldSeatsOutDto holdSeats(String userId, HoldSeatsInDto holdSeatsInDto) {
         int eventId = holdSeatsInDto.eventId();
         List<SeatDto> seats = holdSeatsInDto.seats();
         SeatDto first = seats.get(0);
@@ -55,7 +55,6 @@ public class InventoryService {
                 .toList();
 
         UUID holdId = UUID.randomUUID();
-        String userId = "test_user";
         String holdLookupKey = "hold:lookup:" + userId + ":" + eventId;
         String holdKey = "hold:" + holdId;
 
