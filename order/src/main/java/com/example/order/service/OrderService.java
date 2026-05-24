@@ -147,7 +147,7 @@ public class OrderService {
     // Must match the TTL on RabbitConfig.paymentWindowCheckQueue.
     private static final java.time.Duration PAYMENT_WINDOW = java.time.Duration.ofMinutes(5);
 
-    public PaymentApi.PaymentResponse processPayment(String userId, Long orderId, String confirmationTokenId) {
+    public PaymentApi.PaymentResponse payOrder(String userId, Long orderId, String confirmationTokenId) {
         // Step 1 (locked, short tx): PENDING -> AWAITING_PAYMENT. Extending payment_window_expires_at
         // and publishing the payment-window check happen here so the deadline can never slip
         // past the row's commit.

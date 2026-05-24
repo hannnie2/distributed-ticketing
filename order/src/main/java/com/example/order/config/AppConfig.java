@@ -36,7 +36,7 @@ public class AppConfig {
 
     @Bean
     public RestClient paymentRestClient(RestClient.Builder builder,
-                                        @Value("${payment.service.url:http://localhost:8082}") String url) {
+                                        @Value("${payment.service.url:http://localhost:8083}") String url) {
         // 15s allows Stripe to complete before the order service times out,
         // preventing concurrent retry races that can cause a null paymentIntentId on the order.
         return buildClient(builder, url, Duration.ofSeconds(15));
@@ -44,7 +44,7 @@ public class AppConfig {
 
     @Bean
     public RestClient eventRestClient(RestClient.Builder builder,
-                                      @Value("${event.service.url:http://localhost:8083}") String url) {
+                                      @Value("${event.service.url:http://localhost:8080}") String url) {
         return buildClient(builder, url, Duration.ofSeconds(3));
     }
 }

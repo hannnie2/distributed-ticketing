@@ -51,7 +51,7 @@ public class OrderController {
                                       @PathVariable(name = "id") Long orderId,
                                       @RequestBody PayOrderRequest request) {
         return Result.success("Payment processed",
-                orderService.processPayment(userId, orderId, request.confirmationTokenId()));
+                orderService.payOrder(userId, orderId, request.confirmationTokenId()));
     }
 
     @PostMapping("/{id}/abandon")
