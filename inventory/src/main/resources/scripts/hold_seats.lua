@@ -1,62 +1,53 @@
--- KEYS[1] = row bitmap key          (seats:{eventId}:{section}:{row})
--- KEYS[2] = capacity key            (seats:{eventId}:{section}:{row}:cap)
--- KEYS[3] = hold lookup key         (hold:lookup:{userId}:{eventId})
--- KEYS[4] = hold key                (hold:{holdId})
+-- All KEYS share the {e:E:s:S:r:R} hash tag and live in the same slot.
+-- KEYS[1] = bits        ({e:E:s:S:r:R}:bits)
+-- KEYS[2] = cap         ({e:E:s:S:r:R}:cap)
+-- KEYS[3] = idem        ({e:E:s:S:r:R}:idem:{idemKey})   -- client-supplied idempotency
+-- KEYS[4] = hold        ({e:E:s:S:r:R}:hold:{holdId})
 -- ARGV[1] = holdId
--- ARGV[2] = userId
--- ARGV[3] = eventId
--- ARGV[4] = sectionRow              (e.g. "1:A")
--- ARGV[5] = hold TTL in seconds
--- ARGV[6..N] = seat offsets (0-based)
+-- ARGV[2] = idemTtlSeconds
+-- ARGV[3..N] = seat offsets (0-based)
 
-local FIXED_ARGV = 5
+local FIXED_ARGV = 2
 
--- check for existing hold (idempotent retry)
-local existingHoldId = redis.call('GET', KEYS[3])
-if existingHoldId then
-    local remainingTtl = redis.call('TTL', 'hold:' .. existingHoldId)
-    if remainingTtl > 0 then
-        return {2, existingHoldId, remainingTtl}
+-- Idempotent retry: same idemKey replayed (Spring Retry, network blip) returns the
+-- existing holdId. Different idemKey is always a new request and proceeds independently.
+local existing = redis.call('GET', KEYS[3])
+if existing then
+    if redis.call('EXISTS', '{' .. string.match(KEYS[3], '{(.-)}') .. '}:hold:' .. existing) == 1 then
+        return {2, existing}
     end
-    -- hold expired but lookup key lingered, clean up and proceed
+    -- Idem key outlived its hold (released/sold). Treat as a fresh request.
     redis.call('DEL', KEYS[3])
 end
 
 local cap = redis.call('GET', KEYS[2])
 if not cap then
-    return {0}
+    return {0, 'no_capacity'}
 end
 local capacity = tonumber(cap)
 
 local numSeats = #ARGV - FIXED_ARGV
 
--- validate all seats are available
 for i = 1, numSeats do
     local off = tonumber(ARGV[FIXED_ARGV + i])
     if off >= capacity then
-        return {0}
+        return {0, 'out_of_range'}
     end
     if redis.call('GETBIT', KEYS[1], off) == 1 then
-        return {0}
+        return {0, 'taken'}
     end
 end
 
--- flip bits
 for i = 1, numSeats do
-    local off = tonumber(ARGV[FIXED_ARGV + i])
-    redis.call('SETBIT', KEYS[1], off, 1)
+    redis.call('SETBIT', KEYS[1], tonumber(ARGV[FIXED_ARGV + i]), 1)
 end
 
--- create hold hash
-local ttl = tonumber(ARGV[5])
+-- Hold hash carries only what the orphan reconciler needs to identify and
+-- release this hold: the seat offsets.
 redis.call('HMSET', KEYS[4],
-    'userId', ARGV[2],
-    'eventId', ARGV[3],
-    'row', ARGV[4],
     'seats', table.concat({unpack(ARGV, FIXED_ARGV + 1)}, ','))
-redis.call('EXPIRE', KEYS[4], ttl)
 
--- create lookup key for idempotent retry
-redis.call('SET', KEYS[3], ARGV[1], 'EX', ttl)
+-- Idem key TTLs out on its own; release/convert paths don't need to know about it.
+redis.call('SET', KEYS[3], ARGV[1], 'EX', tonumber(ARGV[2]))
 
-return {1}
+return {1, ARGV[1]}

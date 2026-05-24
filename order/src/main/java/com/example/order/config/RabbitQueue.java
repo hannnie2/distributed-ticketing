@@ -21,4 +21,11 @@ public class RabbitQueue {
     public static final String ORDER_CANCELLED_KEY = "order_cancelled";
     public static final String ORDER_CONFIRMED_KEY = "order_confirmed";
     public static final String REFUND_REQUIRED_KEY = "refund_required";
+
+    // Payment-window timeout: published when processPayment transitions PENDING -> AWAITING_PAYMENT.
+    // Sits in the check queue for 5 min, then dead-letters into the expired queue.
+    public static final String PAYMENT_WINDOW_CHECK_QUEUE = "q.order.payment_window_check";
+    public static final String PAYMENT_WINDOW_INITIATED_KEY = "payment_window_initiated";
+    public static final String PAYMENT_WINDOW_EXPIRED_QUEUE = "q.order.payment_window_expired";
+    public static final String PAYMENT_WINDOW_EXPIRED_KEY = "payment_window_expired";
 }

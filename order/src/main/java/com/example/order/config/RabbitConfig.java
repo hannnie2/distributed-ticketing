@@ -91,4 +91,29 @@ public class RabbitConfig {
                 .with(RabbitQueue.INVENTORY_DEDUCTION_FAILED_KEY);
     }
 
+    // Delay queue: holds payment-window-check messages for 5 min, then dead-letters
+    // to deadLetterExchange with PAYMENT_WINDOW_EXPIRED_KEY.
+    @Bean
+    public Queue paymentWindowCheckQueue() {
+        return QueueBuilder.durable(RabbitQueue.PAYMENT_WINDOW_CHECK_QUEUE).ttl(5 * 60 * 1000)
+                .withArgument("x-dead-letter-exchange", RabbitQueue.DEAD_LETTER_EXCHANGE)
+                .withArgument("x-dead-letter-routing-key", RabbitQueue.PAYMENT_WINDOW_EXPIRED_KEY).build();
+    }
+
+    @Bean
+    public Binding paymentWindowCheckQueueBinding(Queue paymentWindowCheckQueue, DirectExchange orderExchange) {
+        return BindingBuilder.bind(paymentWindowCheckQueue).to(orderExchange)
+                .with(RabbitQueue.PAYMENT_WINDOW_INITIATED_KEY);
+    }
+
+    @Bean
+    public Queue paymentWindowExpiredQueue() {
+        return QueueBuilder.durable(RabbitQueue.PAYMENT_WINDOW_EXPIRED_QUEUE).build();
+    }
+
+    @Bean
+    public Binding paymentWindowExpiredQueueBinding(Queue paymentWindowExpiredQueue, DirectExchange deadLetterExchange) {
+        return BindingBuilder.bind(paymentWindowExpiredQueue).to(deadLetterExchange)
+                .with(RabbitQueue.PAYMENT_WINDOW_EXPIRED_KEY);
+    }
 }

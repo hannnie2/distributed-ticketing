@@ -1,13 +1,14 @@
 package com.example.inventory.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 
 import java.util.List;
 
-public record HoldSeatsInDto(
+public record ReleaseHoldInDto(
         @NotNull Integer eventId,
-        @NotBlank String idempotencyKey,
-        @NotEmpty List<SeatDto> seats
-) {}
+        @NotNull Integer section,
+        @NotNull String row,
+        @NotEmpty List<Integer> seats
+) {
+}

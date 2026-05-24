@@ -1,6 +1,5 @@
 package com.example.order.api;
 
-import com.example.order.exception.HoldExpiredException;
 import com.example.order.exception.SeatUnavailableException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -14,7 +13,6 @@ import org.springframework.web.client.RestClient;
 
 import com.example.order.dto.SeatDto;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -27,26 +25,35 @@ public class InventoryApi {
         this.restClient = restClient;
     }
 
-    private record InventoryHoldRequest(int eventId, List<Map<String, Object>> seats) {
+    private record InventoryHoldRequest(int eventId, String idempotencyKey, List<Map<String, Object>> seats) {
     }
 
-    public record InventoryHoldResponse(String holdId, Instant expiresAt, List<SeatDto> seats) {
+    public record InventoryHoldResponse(String holdId, List<SeatDto> seats) {
     }
 
     private record ApiResponse<T>(boolean success, String message, T data) {
     }
 
-    public void isHoldActive(String holdId) {
-        restClient.get()
-                .uri("api/v1/holds/{holdId}", holdId)
+    // Synchronous best-effort release used by createOrder's catch-block to compensate
+    // for a successful hold whose order INSERT failed. Inventory's orphan reconciler
+    // is the safety net if this also fails.
+    public void releaseHold(int eventId, int section, String row, String holdId, List<Integer> seatNumbers) {
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("eventId", eventId);
+        body.put("section", section);
+        body.put("row", row);
+        body.put("holdId", holdId);
+        body.put("seats", seatNumbers);
+        restClient.post()
+                .uri("api/v1/holds/{holdId}/release", holdId)
+                .body(body)
                 .retrieve()
-                .onStatus(status -> status.value() == 410,
-                        (request, response) -> {
-                            throw new HoldExpiredException("Your seat hold has expired. Please start a new order.");
-                        })
                 .toBodilessEntity();
     }
 
+    // idempotencyKey must be stable across retries: generate it in the caller, before
+    // invoking this method, so Spring Retry replays carry the same value and inventory
+    // returns the existing hold instead of creating a parallel one.
     @Retryable(
             retryFor = {ResourceAccessException.class, HttpServerErrorException.class},
             maxAttempts = 4,
@@ -54,8 +61,9 @@ public class InventoryApi {
                     delay = 200,
                     multiplier = 2
             ))
-    public InventoryHoldResponse holdSeats(int eventId, List<Map<String, Object>> seats, String userId) {
-        InventoryHoldRequest req = new InventoryHoldRequest(eventId, seats);
+    public InventoryHoldResponse holdSeats(int eventId, List<Map<String, Object>> seats,
+                                           String userId, String idempotencyKey) {
+        InventoryHoldRequest req = new InventoryHoldRequest(eventId, idempotencyKey, seats);
 
         ApiResponse<InventoryHoldResponse> response = restClient.post()
                 .uri("api/v1/holds")

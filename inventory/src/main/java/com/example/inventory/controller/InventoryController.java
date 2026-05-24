@@ -1,6 +1,7 @@
 package com.example.inventory.controller;
 
 import com.example.inventory.dto.HoldSeatsInDto;
+import com.example.inventory.dto.ReleaseHoldInDto;
 import com.example.inventory.service.InventoryService;
 import com.example.inventory.util.Result;
 import jakarta.validation.Valid;
@@ -24,12 +25,15 @@ public class InventoryController {
         return Result.success("Seats held", inventoryService.holdSeats(userId, holdSeatsInDto));
     }
 
-    @GetMapping("/holds/{holdId}")
-    public ResponseEntity<?> checkHold(@PathVariable String holdId) {
-        if (!inventoryService.isHoldActive(holdId)) {
-            return Result.fail(HttpStatus.GONE, "Hold has expired");
-        }
-        return Result.success("Hold is active", null);
+    // Used by order service to compensate a createOrder catch-block (hold succeeded,
+    // order INSERT failed). Idempotent: replays after a successful release are no-ops.
+    @PostMapping("/holds/{holdId}/release")
+    public ResponseEntity<?> releaseHold(
+            @PathVariable String holdId,
+            @Valid @RequestBody ReleaseHoldInDto body) {
+        inventoryService.releaseHoldDirect(body.eventId(), body.section(), body.row(),
+                holdId, body.seats());
+        return Result.success("Hold released", null);
     }
 
     @PostMapping("/cache/warm/{eventId}")

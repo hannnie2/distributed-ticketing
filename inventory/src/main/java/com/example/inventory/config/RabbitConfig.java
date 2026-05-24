@@ -83,6 +83,19 @@ public class RabbitConfig {
                 .with(ORDER_PAID_KEY);
     }
 
+    // After inventory.deducted is published (by deductInventory), this queue triggers
+    // convertSold against Redis to remove the hold hash + userhold key. Bits stay set.
+    @Bean
+    public Queue convertSoldQueue() {
+        return QueueBuilder.durable("q.inventory.convert_sold").build();
+    }
+
+    @Bean
+    public Binding convertSoldQueueBinding(Queue convertSoldQueue, DirectExchange inventoryExchange) {
+        return BindingBuilder.bind(convertSoldQueue).to(inventoryExchange)
+                .with(INVENTORY_DEDUCTED_KEY);
+    }
+
     @Bean
     public Queue cacheWarmFailedQueue() {
         return QueueBuilder.durable("q.admin.cache_warm_failed").build();

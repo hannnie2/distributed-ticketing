@@ -42,11 +42,6 @@ public class GlobalExceptionHandler {
         return Result.fail(HttpStatus.PAYMENT_REQUIRED, e.getMessage());
     }
 
-    @ExceptionHandler(HoldExpiredException.class)
-    public ResponseEntity<ApiResponse<Void>> handleHoldExpired(HoldExpiredException e) {
-        return Result.fail(HttpStatus.GONE, e.getMessage());
-    }
-
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneric(Exception ex) {
         log.error("Unhandled exception", ex);

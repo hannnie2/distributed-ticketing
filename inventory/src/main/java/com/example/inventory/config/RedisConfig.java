@@ -40,8 +40,13 @@ public class RedisConfig {
     }
 
     @Bean
-    public RedisScript<Boolean> releaseSeatsScript() {
-        return RedisScript.of(new ClassPathResource("scripts/release_seats.lua"), Boolean.class);
+    public RedisScript<Long> releaseSeatsScript() {
+        return RedisScript.of(new ClassPathResource("scripts/release_seats.lua"), Long.class);
+    }
+
+    @Bean
+    public RedisScript<Long> convertSoldScript() {
+        return RedisScript.of(new ClassPathResource("scripts/convert_sold.lua"), Long.class);
     }
 
 }
