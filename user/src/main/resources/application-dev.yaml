@@ -1,0 +1,35 @@
+server:
+  port: 8084
+
+spring:
+  task:
+    scheduling:
+      pool:
+        size: 2
+
+  application:
+    name: user
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME:app_user_db}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    properties:
+      dialect: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST}
+    port: ${RABBITMQ_PORT}
+    username: ${RABBITMQ_USERNAME}
+    password: ${RABBITMQ_PASSWORD}
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: INFO
+    com.example: DEBUG
