@@ -17,7 +17,11 @@ import java.util.List;
 
 @Entity
 @Table(
-        name = "orders"
+        name = "orders",
+        indexes = {
+                @Index(name = "idx_orders_status_payment_initiated_at",
+                        columnList = "status, paymentInitiatedAt")
+        }
 )
 @Data
 public class Order {
@@ -50,6 +54,8 @@ public class Order {
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
+
+    private LocalDateTime paymentInitiatedAt;
 
 }
 

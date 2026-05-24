@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
@@ -89,32 +90,83 @@ public class OrderService {
     }
 
     public PaymentApi.PaymentResponse processPayment(Long orderId, String confirmationTokenId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new OrderNotFoundException(orderId));
+        // Step 1 (locked, short tx): PENDING -> AWAITING_PAYMENT. This is the cross-handler lock.
+        Order locked = transactionTemplate.execute(s -> {
+            Order o = orderRepository.findByIdForUpdate(orderId)
+                    .orElseThrow(() -> new OrderNotFoundException(orderId));
 
-        if (order.getStatus() != OrderStatus.PENDING) {
-            throw new InvalidOrderStateException("Order is not in pending state");
-        }
+            if (o.getStatus() != OrderStatus.PENDING) {
+                throw new InvalidOrderStateException("Order is not in pending state");
+            }
+            if (o.getPaymentIntentId() != null) {
+                throw new PaymentAlreadyInitiatedException();
+            }
 
-        if (order.getPaymentIntentId() != null) {
-            throw new PaymentAlreadyInitiatedException();
-        }
+            o.setStatus(OrderStatus.AWAITING_PAYMENT);
+            o.setPaymentInitiatedAt(LocalDateTime.now());
+            return orderRepository.save(o);
+        });
 
-        inventoryApi.isHoldActive(order.getHoldId());
+        // Step 2 (no lock, no tx): inventory hold check + Stripe call.
+        inventoryApi.isHoldActive(locked.getHoldId());
 
         PaymentApi.PaymentResponse response = paymentApi.processPayment(
-                orderId, order.getAmount(), "cad", confirmationTokenId);
+                orderId, locked.getAmount(), "cad", confirmationTokenId);
 
-        if ("failed".equals(response.status())) {
+        // Step 3 (locked, short tx): reconcile based on Stripe response.
+        return reconcile(orderId, response);
+    }
+
+    private PaymentApi.PaymentResponse reconcile(Long orderId, PaymentApi.PaymentResponse response) {
+        return transactionTemplate.execute(s -> {
+            Order o = orderRepository.findByIdForUpdate(orderId).orElseThrow(() -> new OrderNotFoundException(orderId));
+
+            if (o.getStatus() != OrderStatus.AWAITING_PAYMENT) {
+                log.error("reconcile found unexpected state. orderId={}, status={}, paymentIntentId={}",
+                        orderId, o.getStatus(), response.paymentIntentId());
+                return response;
+            }
+
+            switch (response.status()) {
+                case "succeeded" -> {
+                    o.setPaymentIntentId(response.paymentIntentId());
+                    o.setStatus(OrderStatus.PROCESSING);
+                    orderRepository.save(o);
+                    outboxMessageRepository.save(buildOrderPaidOutbox(o));
+                    eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.PROCESSING));
+                }
+                case "failed" -> {
+                    // Revert to PENDING so the user can retry with a fresh confirmation token.
+                    // Hold stays intact (seats remain reserved); order TTL bounds the retry window.
+                    o.setStatus(OrderStatus.PENDING);
+                    o.setPaymentInitiatedAt(null);
+                    orderRepository.save(o);
+                }
+                case "requires_action" -> {
+                    // 3DS / SCA — Stripe fires a webhook later. Stay in AWAITING_PAYMENT.
+                    o.setPaymentIntentId(response.paymentIntentId());
+                    orderRepository.save(o);
+                }
+                default ->
+                        log.error("Unknown Stripe status. orderId={}, status={}", orderId, response.status());
+            }
             return response;
-        }
+        });
+    }
 
-        int updated = orderRepository.savePaymentResult(orderId, response.paymentIntentId(), OrderStatus.PENDING);
-        if (updated == 0) {
-            log.warn("Order {} payment result already saved by a concurrent request, skipping", orderId);
-        }
+    private OutboxMessage buildOrderPaidOutbox(Order order) {
+        List<SeatDto> seats = order.getSeats();
+        SeatDto first = seats.get(0);
+        List<Integer> seatNumbers = seats.stream().map(SeatDto::number).toList();
 
-        return response;
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderId", String.valueOf(order.getId()));
+        payload.put("eventId", order.getEventId());
+        payload.put("section", first.section());
+        payload.put("row", first.row());
+        payload.put("seats", seatNumbers);
+
+        return outboxEntry(RabbitQueue.PAYMENT_EXCHANGE, "order_paid", payload);
     }
 
     public record OrderExpiredEvent(Long orderId) {
@@ -126,6 +178,11 @@ public class OrderService {
         Long orderId = event.orderId();
         Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
         if (order == null) return;
+
+        if (order.getStatus() == OrderStatus.AWAITING_PAYMENT) {
+            log.info("Order {} TTL fired but payment is in flight (AWAITING_PAYMENT), refusing to cancel — reconcile/janitor owns this row", orderId);
+            return;
+        }
 
         if (order.getStatus() != OrderStatus.PENDING) {
             log.debug("Order {} expired but status is already {}, skipping", orderId, order.getStatus());
@@ -148,6 +205,11 @@ public class OrderService {
     public void abandonOrder(Long orderId) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (order.getStatus() == OrderStatus.AWAITING_PAYMENT) {
+            log.info("abandonOrder refused — payment in flight. orderId={}", orderId);
+            throw new InvalidOrderStateException("Payment in progress, please wait");
+        }
 
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new InvalidOrderStateException("Order is not in a state that can be abandoned");
@@ -263,29 +325,21 @@ public class OrderService {
 
         if (order == null) return;
 
-        if (order.getStatus() != OrderStatus.PENDING) {
-            log.debug("Order {} is no longer PENDING (status={}), skipping inventory deduction", orderId, order.getStatus());
+        // This listener now serves only the 3DS webhook path — sync payments are
+        // resolved inline by processPayment's reconcile step. AWAITING_PAYMENT is
+        // the only valid state; anything else means reconcile already handled it.
+        if (order.getStatus() != OrderStatus.AWAITING_PAYMENT) {
+            log.debug("Order {} in state {}, skipping inventory deduction", orderId, order.getStatus());
             return;
         }
 
-        log.debug("Initiating inventory deduction for order {}", orderId);
+        log.debug("Initiating inventory deduction for order {} (3DS webhook path)", orderId);
 
-        // Orders are guaranteed to be single section:row (enforced at creation)
-        List<SeatDto> seats = order.getSeats();
-        SeatDto first = seats.get(0);
-        List<Integer> seatNumbers = seats.stream().map(SeatDto::number).toList();
-
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("orderId", String.valueOf(orderId));
-        payload.put("eventId", order.getEventId());
-        payload.put("section", first.section());
-        payload.put("row", first.row());
-        payload.put("seats", seatNumbers);
-
-        outboxMessageRepository.save(outboxEntry(RabbitQueue.PAYMENT_EXCHANGE, "order_paid", payload));
+        outboxMessageRepository.save(buildOrderPaidOutbox(order));
 
         order.setStatus(OrderStatus.PROCESSING);
         orderRepository.save(order);
+        eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, OrderStatus.PROCESSING));
     }
 
     private OutboxMessage outboxEntry(String exchange, String routingKey, Map<String, Object> payload) {

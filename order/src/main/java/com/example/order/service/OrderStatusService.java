@@ -39,7 +39,8 @@ public class OrderStatusService {
     }
 
     public SseEmitter subscribe(long orderId) {
-        // check if status is already terminal
+        // Only CONFIRMED/CANCELLED are terminal. AWAITING_PAYMENT is in-flight —
+        // the subscribe must wait for reconcile/janitor to drive it to a terminal state.
         OrderStatus currentStatus = getOrderStatus(orderId);
         if (currentStatus == OrderStatus.CONFIRMED || currentStatus == OrderStatus.CANCELLED) {
             SseEmitter emitter = new SseEmitter(0L);
