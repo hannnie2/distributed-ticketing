@@ -30,7 +30,7 @@ jobs:
         if: github.event_name == 'push'
         working-directory: ${{ matrix.service }}
         run: |
-          mvn jib:build \
+          mvn compile jib:build \
             -Dimage=ghcr.io/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }} \
             -Djib.to.tags=latest \
             -Djib.to.auth.username=${{ github.actor }} \
