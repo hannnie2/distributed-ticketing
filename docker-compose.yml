@@ -59,6 +59,20 @@ services:
     environment:
       DB_NAME: app_payment_db
     restart: always
+  user:
+    container_name: user-service
+    image: event-app/user
+    ports:
+      - "8084:8084"
+    networks:
+      - app-network
+    depends_on:
+      - db
+      - rabbitmq
+    env_file: .env
+    environment:
+      DB_NAME: app_user_db
+    restart: always
   db:
     container_name: db
     image: postgres:18.4
