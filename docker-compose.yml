@@ -1,7 +1,7 @@
 services:
   event:
     container_name: event-service
-    build: ./event
+    image: event-app/event
     ports:
       - "8080:8080"
     networks:
@@ -16,7 +16,7 @@ services:
     restart: always
   inventory:
     container_name: inventory-service
-    build: ./inventory
+    image: event-app/inventory
     ports:
       - "8081:8081"
     networks:
@@ -31,7 +31,7 @@ services:
     restart: always
   order:
     container_name: order-service
-    build: ./order
+    image: event-app/order
     ports:
       - "8082:8082"
     networks:
@@ -46,7 +46,7 @@ services:
     restart: always
   payment:
     container_name: payment-service
-    build: ./payment
+    image: event-app/payment
     ports:
       - "8083:8083"
     networks:
