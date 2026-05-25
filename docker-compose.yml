@@ -13,7 +13,6 @@ services:
     env_file: .env
     environment:
       DB_NAME: app_event_db
-    restart: always
   inventory:
     container_name: inventory-service
     image: event-app/inventory
@@ -28,7 +27,6 @@ services:
     env_file: .env
     environment:
       DB_NAME: app_inventory_db
-    restart: always
   order:
     container_name: order-service
     image: event-app/order
@@ -43,7 +41,6 @@ services:
     env_file: .env
     environment:
       DB_NAME: app_order_db
-    restart: always
   payment:
     container_name: payment-service
     image: event-app/payment
@@ -58,28 +55,27 @@ services:
     env_file: .env
     environment:
       DB_NAME: app_payment_db
-    restart: always
-  user:
-    container_name: user-service
-    image: event-app/user
-    ports:
-      - "8084:8084"
-    networks:
-      - app-network
-    depends_on:
-      - db
-      - rabbitmq
-    env_file: .env
-    environment:
-      DB_NAME: app_user_db
-    restart: always
+#  user:
+#    container_name: user-service
+#    image: event-app/user
+#    ports:
+#      - "8084:8084"
+#    networks:
+#      - app-network
+#    depends_on:
+#      - db
+#      - rabbitmq
+#    env_file: .env
+#    environment:
+#      DB_NAME: app_user_db
   db:
     container_name: db
     image: postgres:18.4
     networks:
       - app-network
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     env_file: .env
     environment:
       POSTGRES_USER: ${DB_USERNAME}
@@ -100,6 +96,8 @@ services:
   rabbitmq:
     container_name: rabbitmq
     image: rabbitmq:4.3.0-management-alpine
+    networks:
+      - app-network
     ports:
       - "15672:15672"
       - "5672:5672"
