@@ -8,21 +8,21 @@ A microservices-based event ticketing system built with Spring Boot.
 
 ## Architecture
 
-Four services communicate over RabbitMQ (async, outbox-relayed) and HTTP (sync, where needed). PostgreSQL is the system of record per service; Redis is used for short-lived holds and Pub/Sub fan-out for SSE.
+### Services
 
-| Service     | Port | Responsibility                                                |
-|-------------|------|---------------------------------------------------------------|
-| `event`     | 8080 | Event catalog: events, artists, venues, categories            |
-| `inventory` | 8081 | Seat holds and deductions backed by Redis + Postgres          |
-| `order`     | 8082 | Order lifecycle, payment orchestration, SSE status streaming  |
-| `payment`   | 8083 | Stripe integration, PaymentIntent lifecycle                   |
+| Service     | Port | Responsibility                                               |
+|-------------|------|--------------------------------------------------------------|
+| `event`     | 8080 | Event catalog: events, artists, venues, categories           |
+| `inventory` | 8081 | Seat holds and deductions                                    |
+| `order`     | 8082 | Order lifecycle, payment orchestration, SSE status streaming |
+| `payment`   | 8083 | Stripe integration, PaymentIntent lifecycle                  |
+| `user`      | 8084 | User profile                                                 |
 
-Shared infrastructure: PostgreSQL, Redis, RabbitMQ.
+`user`, `order`, `inventory`, and `payment` are client-facing microservices exposed via the API Gateway, and `payment` is the only one that is used internally.
+The services communicate using HTTP for synchronous communication and messaging via RabbitMQ for asynchronous communication. The microservices aim for eventual consistency and implement the SAGA pattern, specifically, choreography, to coordinate distributed transactions.
 
 ### Architecture diagram
 ![Architecture diagram](docs/architecture.png)
-
-### Key flow
 
 ## Tech stack
 
@@ -54,17 +54,21 @@ Copy the example file and fill in secrets:
 cp .env.example .env
 ```
 
-Required variables:
-
-| Variable                 | Description                            |
-|--------------------------|----------------------------------------|
-| `POSTGRES_PASSWORD`      | Postgres superuser password            |
-| `RABBITMQ_DEFAULT_USER`  | RabbitMQ user                          |
-| `RABBITMQ_DEFAULT_PASS`  | RabbitMQ password                      |
-| `STRIPE_SECRET_KEY`      | Stripe secret key (test mode)          |
-| `RESEND_API_KEY`         | Resend API key (optional)              |
-
-<!-- TODO: add any service-specific vars (DB names, JWT secrets, etc.) -->
+Required variables:  
+`DB_HOST`  
+`DB_PORT`  
+`DB_USERNAME`  
+`DB_PASSWORD`  
+`RABBITMQ_HOST`  
+`RABBITMQ_PORT`  
+`RABBITMQ_USERNAME`  
+`RABBITMQ_PASSWORD`  
+`REDIS_HOST`  
+`REDIS_PORT`  
+`RESEND_API_KEY`  
+`RESEND_FROM`  
+`STRIPE_API_KEY`  
+`STRIPE_WEBHOOK_SECRET`   
 
 ### Start everything
 
@@ -80,17 +84,3 @@ Services come up at:
 - Payment:   http://localhost:8083
 - User:      http://localhost:8084
 - RabbitMQ management UI: http://localhost:15672
-
-## API
-
-TODO: replace with link to OpenAPI/Swagger.
-
-## Deployment
-
-<!-- TODO: describe how images are built/published, which environments exist, and how k8s/ is applied. -->
-
-Kubernetes manifests live under `k8s/`. Apply with:
-
-```bash
-kubectl apply -f k8s/
-```
